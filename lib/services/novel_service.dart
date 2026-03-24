@@ -1,7 +1,5 @@
-import 'package:http/http.dart' as http;
-import 'package:html/parser.dart' as htmlParser;
+import 'dart:convert';
 import '../models/novel.dart';
-import 'auth_service.dart';
 
 class HomeData {
   final List<String> bannerUrls;
@@ -16,74 +14,91 @@ class HomeData {
 }
 
 class NovelService {
-  static const _baseUrl = 'https://www.esjzone.cc';
+  static const baseUrl = 'https://www.esjzone.cc';
 
-  static Future<Map<String, String>> _headers() async {
-    final cookie = await AuthService.getCookie() ?? '';
-    return {
-      'Cookie': cookie,
-      'User-Agent': 'Mozilla/5.0 (Linux; Android 10) AppleWebKit/537.36',
-      'Referer': _baseUrl,
-    };
-  }
+  /// 解析从 WebView JS 桥接回传的 JSON 数据
+  static HomeData parseHomeJson(String raw) {
+    final map = jsonDecode(raw) as Map<String, dynamic>;
 
-  static Future<HomeData> fetchHomePage() async {
-    final response = await http.get(
-      Uri.parse('$_baseUrl/'),
-      headers: await _headers(),
-    );
+    final banners = (map['banners'] as List? ?? [])
+        .map((e) => e.toString())
+        .where((s) => s.isNotEmpty)
+        .toList();
 
-    final doc = htmlParser.parse(response.body);
+    final categories = (map['categories'] as List? ?? [])
+        .map((e) => e.toString())
+        .where((s) => s.isNotEmpty)
+        .take(12)
+        .toList();
 
-    // 解析分类导航
-    final categories = <String>[];
-    final navItems = doc.querySelectorAll('.navbar-nav .nav-item .nav-link');
-    for (final item in navItems) {
-      final text = item.text.trim();
-      if (text.isNotEmpty && !text.contains('\n')) {
-        categories.add(text);
-      }
-    }
-
-    // 解析轮播图
-    final bannerUrls = <String>[];
-    final banners = doc.querySelectorAll('.swiper-slide img, .carousel-item img, .banner img');
-    for (final img in banners) {
-      final src = img.attributes['src'] ?? img.attributes['data-src'] ?? '';
-      if (src.isNotEmpty) bannerUrls.add(src);
-    }
-
-    // 解析最新更新小说列表
-    final novels = <Novel>[];
-    final items = doc.querySelectorAll('.col-xs-6.col-md-4.col-lg-3, .novel-item, .book-item');
-    for (final item in items) {
-      final titleEl = item.querySelector('.novel-title, .title, h3, h4, .card-title');
-      final coverEl = item.querySelector('img');
-      final authorEl = item.querySelector('.author, .card-text');
-      final linkEl = item.querySelector('a');
-      final tagEls = item.querySelectorAll('.badge, .tag, .label');
-
-      final title = titleEl?.text.trim() ?? '';
-      final cover = coverEl?.attributes['src'] ?? coverEl?.attributes['data-src'] ?? '';
-      final author = authorEl?.text.trim() ?? '';
-      final url = linkEl?.attributes['href'] ?? '';
-      final tags = tagEls.map((e) => e.text.trim()).where((t) => t.isNotEmpty).toList();
-
-      if (title.isNotEmpty) {
-        novels.add(Novel(
-          title: title,
-          coverUrl: cover.startsWith('http') ? cover : '$_baseUrl$cover',
-          author: author,
-          url: url.startsWith('http') ? url : '$_baseUrl$url',
-          tags: tags,
-        ));
-      }
-    }
+    final novels = (map['novels'] as List? ?? []).map((e) {
+      final m = e as Map<String, dynamic>;
+      final cover = m['cover']?.toString() ?? '';
+      final url = m['url']?.toString() ?? '';
+      return Novel(
+        title: m['title']?.toString() ?? '',
+        coverUrl: cover.startsWith('http') ? cover : '$baseUrl$cover',
+        author: m['author']?.toString() ?? '',
+        url: url.startsWith('http') ? url : '$baseUrl$url',
+        tags: (m['tags'] as List? ?? []).map((t) => t.toString()).toList(),
+      );
+    }).where((n) => n.title.isNotEmpty).toList();
 
     return HomeData(
-      bannerUrls: bannerUrls,
-      categories: categories.take(10).toList(),
+      bannerUrls: banners,
+      categories: categories,
       latestNovels: novels,
     );
   }
+
+  /// 注入 HomeScreen 的 WebView 以提取首页数据
+  static const extractScript = r"""
+(function() {
+  try {
+    var banners = [];
+    document.querySelectorAll('.swiper-slide img, .carousel-item img, .banner img').forEach(function(img) {
+      var src = img.getAttribute('src') || img.getAttribute('data-src') || img.getAttribute('data-lazy') || '';
+      if (src && src.length > 4 && banners.indexOf(src) === -1) banners.push(src);
+    });
+
+    var categories = [];
+    document.querySelectorAll('.navbar-nav .nav-link, nav .nav-link').forEach(function(el) {
+      var t = (el.innerText || '').trim();
+      if (t && t.length < 20 && t.indexOf('\n') === -1 && categories.indexOf(t) === -1) categories.push(t);
+    });
+
+    var novels = [];
+    var selectors = [
+      '.col-xs-6.col-md-4.col-lg-3',
+      '.col-6.col-md-4.col-lg-3',
+      '.novel-item',
+      '.book-item'
+    ];
+    var items = [];
+    for (var i = 0; i < selectors.length; i++) {
+      var found = document.querySelectorAll(selectors[i]);
+      if (found.length > 0) { items = found; break; }
+    }
+    items.forEach(function(item) {
+      var titleEl = item.querySelector('.novel-title, .title, h3, h4, .card-title');
+      var coverEl = item.querySelector('img');
+      var authorEl = item.querySelector('.author, .card-text');
+      var linkEl = item.querySelector('a');
+      var tagEls = item.querySelectorAll('.badge, .tag, .label');
+      var title = titleEl ? (titleEl.innerText || '').trim() : '';
+      if (!title && coverEl) title = coverEl.getAttribute('alt') || '';
+      var cover = coverEl ? (coverEl.getAttribute('src') || coverEl.getAttribute('data-src') || '') : '';
+      var author = authorEl ? (authorEl.innerText || '').trim() : '';
+      var url = linkEl ? (linkEl.getAttribute('href') || '') : '';
+      var tags = [];
+      tagEls.forEach(function(t) { var txt = (t.innerText || '').trim(); if (txt) tags.push(txt); });
+      if (title) novels.push({title: title, cover: cover, author: author, url: url, tags: tags});
+    });
+
+    FlutterBridge.postMessage(JSON.stringify({banners: banners, categories: categories, novels: novels}));
+  } catch(e) {
+    FlutterBridge.postMessage(JSON.stringify({banners: [], categories: [], novels: [], error: String(e)}));
+  }
+})();
+""";
 }

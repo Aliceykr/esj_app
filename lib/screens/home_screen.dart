@@ -1,4 +1,6 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
+import 'package:webview_flutter/webview_flutter.dart';
 import '../services/auth_service.dart';
 import '../services/novel_service.dart';
 import '../widgets/novel_card.dart';
@@ -18,19 +20,77 @@ class _HomeScreenState extends State<HomeScreen> {
   String? _error;
   String? _selectedCategory;
 
+  late final WebViewController _webController;
+  Completer<void>? _completer;
+
   @override
   void initState() {
     super.initState();
+    _initWebController();
     _load();
   }
 
+  void _initWebController() {
+    _webController = WebViewController()
+      ..setJavaScriptMode(JavaScriptMode.unrestricted)
+      ..addJavaScriptChannel(
+        'FlutterBridge',
+        onMessageReceived: (msg) {
+          if (_completer == null || _completer!.isCompleted) return;
+          try {
+            final data = NovelService.parseHomeJson(msg.message);
+            debugPrint('[HomeScreen] 解析到 ${data.latestNovels.length} 本小说');
+            if (mounted) {
+              setState(() {
+                _data = data;
+                _loading = false;
+                _error = null;
+              });
+            }
+            _completer!.complete();
+          } catch (e) {
+            _completer!.completeError(e);
+          }
+        },
+      )
+      ..setNavigationDelegate(NavigationDelegate(
+        onPageFinished: (url) async {
+          if (!url.contains('esjzone.cc')) return;
+          debugPrint('[HomeScreen] 页面加载完成: $url');
+          // 等待动态内容渲染
+          await Future.delayed(const Duration(seconds: 2));
+          if (_completer != null && !_completer!.isCompleted) {
+            await _webController.runJavaScript(NovelService.extractScript);
+          }
+        },
+        onWebResourceError: (err) {
+          debugPrint('[HomeScreen] 资源错误(isForMainFrame=${err.isForMainFrame}): ${err.description}');
+          // 只处理主框架错误，忽略广告/第三方子资源的网络错误
+          if (err.isForMainFrame == true &&
+              _completer != null &&
+              !_completer!.isCompleted) {
+            _completer!.completeError(Exception(err.description));
+          }
+        },
+      ));
+  }
+
   Future<void> _load() async {
+    if (!mounted) return;
     setState(() { _loading = true; _error = null; });
+
+    _completer = Completer<void>();
+    _webController.loadRequest(Uri.parse('${NovelService.baseUrl}/'));
+
     try {
-      final data = await NovelService.fetchHomePage();
-      setState(() { _data = data; _loading = false; });
+      await _completer!.future.timeout(
+        const Duration(seconds: 25),
+        onTimeout: () => throw Exception('首页加载超时，请检查网络'),
+      );
     } catch (e) {
-      setState(() { _error = e.toString(); _loading = false; });
+      if (mounted) {
+        setState(() { _error = e.toString(); _loading = false; });
+      }
     }
   }
 
@@ -64,7 +124,16 @@ class _HomeScreenState extends State<HomeScreen> {
 
   Widget _buildBody() {
     if (_loading) {
-      return const Center(child: CircularProgressIndicator());
+      return const Center(
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            CircularProgressIndicator(),
+            SizedBox(height: 12),
+            Text('正在加载首页...'),
+          ],
+        ),
+      );
     }
     if (_error != null) {
       return Center(
@@ -75,6 +144,11 @@ class _HomeScreenState extends State<HomeScreen> {
             const SizedBox(height: 12),
             Text('加载失败', style: Theme.of(context).textTheme.titleMedium),
             const SizedBox(height: 8),
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 24),
+              child: Text(_error!, style: const TextStyle(fontSize: 12, color: Colors.grey), textAlign: TextAlign.center),
+            ),
+            const SizedBox(height: 12),
             TextButton(onPressed: _load, child: const Text('重试')),
           ],
         ),
@@ -83,10 +157,8 @@ class _HomeScreenState extends State<HomeScreen> {
     final data = _data!;
     return CustomScrollView(
       slivers: [
-        // 轮播图
         if (data.bannerUrls.isNotEmpty)
           SliverToBoxAdapter(child: _buildBanner(data.bannerUrls)),
-        // 分类导航
         if (data.categories.isNotEmpty)
           SliverToBoxAdapter(
             child: Padding(
@@ -98,7 +170,6 @@ class _HomeScreenState extends State<HomeScreen> {
               ),
             ),
           ),
-        // 小说网格
         SliverPadding(
           padding: const EdgeInsets.all(12),
           sliver: data.latestNovels.isEmpty
@@ -123,11 +194,9 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   Widget _buildBanner(List<String> urls) {
-    final controller = PageController();
     return SizedBox(
       height: 180,
       child: PageView.builder(
-        controller: controller,
         itemCount: urls.length,
         itemBuilder: (context, index) {
           return Padding(
@@ -137,7 +206,7 @@ class _HomeScreenState extends State<HomeScreen> {
               child: Image.network(
                 urls[index],
                 fit: BoxFit.cover,
-                errorBuilder: (_, __, ___) => Container(color: Colors.grey[200]),
+                errorBuilder: (context, error, stack) => Container(color: Colors.grey[200]),
               ),
             ),
           );

@@ -5,7 +5,9 @@
       "Bash(flutter pub:*)",
       "Bash(flutter clean:*)",
       "Bash(xargs grep:*)",
-      "WebFetch(domain:www.esjzone.cc)"
+      "WebFetch(domain:www.esjzone.cc)",
+      "mcp__contextweaver__codebase-retrieval",
+      "Bash(flutter analyze:*)"
     ]
   }
 }

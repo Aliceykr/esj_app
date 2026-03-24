@@ -25,9 +25,11 @@ class _LoginScreenState extends State<LoginScreen> {
           onPageFinished: (url) async {
             setState(() => _isLoading = false);
             debugPrint('WebView navigated to: $url');
-            // 只要离开了登录页就尝试提取 Cookie
-            if (!url.contains('/my/login') && url.contains('esjzone.cc')) {
-              await _extractAndSaveCookies();
+            // 跳转到 profile/forum 页说明登录成功（HttpOnly Cookie 无法用 JS 读取）
+            if (url.contains('esjzone.cc') &&
+                !url.contains('/my/login') &&
+                !url.contains('/my/reg')) {
+              await _onLoginSuccess(url);
             }
           },
         ),
@@ -35,29 +37,16 @@ class _LoginScreenState extends State<LoginScreen> {
       ..loadRequest(Uri.parse('https://www.esjzone.cc/my/login'));
   }
 
-  Future<void> _extractAndSaveCookies() async {
-    // 用 JS 读取所有非 HttpOnly Cookie
-    final jsResult = await _controller.runJavaScriptReturningResult('document.cookie');
-    final jsCookie = jsResult.toString().replaceAll('"', '');
-    debugPrint('JS Cookie: $jsCookie');
-
-    // 用 JS 读取 localStorage 中可能存的 token
-    final lsResult = await _controller.runJavaScriptReturningResult(
-      'JSON.stringify({ews_token: localStorage.getItem("ews_token"), ews_key: localStorage.getItem("ews_key")})',
-    );
-    debugPrint('LocalStorage: $lsResult');
-
-    // 检查是否包含登录凭证
-    if (jsCookie.contains('ews_token') || jsCookie.contains('ews_key') || jsCookie.isNotEmpty) {
-      await AuthService.saveCookie(jsCookie);
-      if (mounted) {
-        Navigator.of(context).pushAndRemoveUntil(
-          MaterialPageRoute(builder: (_) => const HomeScreen()),
-          (_) => false,
-        );
-      }
-    } else {
-      debugPrint('Cookie empty, not navigating yet');
+  Future<void> _onLoginSuccess(String url) async {
+    debugPrint('=== [ESJ] 登录成功，当前 URL: $url');
+    // 登录凭证为 HttpOnly Cookie，由 WebView 自动管理，无需手动提取
+    // 保存一个登录标记，让 AuthService 知道已登录
+    await AuthService.markLoggedIn();
+    if (mounted) {
+      Navigator.of(context).pushAndRemoveUntil(
+        MaterialPageRoute(builder: (_) => const HomeScreen()),
+        (_) => false,
+      );
     }
   }
 
