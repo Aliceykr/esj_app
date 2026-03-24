@@ -1,0 +1,11 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(python -c \":*)",
+      "Bash(flutter pub:*)",
+      "Bash(flutter clean:*)",
+      "Bash(xargs grep:*)",
+      "WebFetch(domain:www.esjzone.cc)"
+    ]
+  }
+}
