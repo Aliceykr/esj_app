@@ -22,7 +22,11 @@ class NovelCard extends StatelessWidget {
                       novel.coverUrl,
                       fit: BoxFit.cover,
                       width: double.infinity,
-                      errorBuilder: (_, _, _) => Container(
+                      // 防盗链：esjzone.cc 图片服务器校验 Referer
+                      headers: const {'Referer': 'https://www.esjzone.cc/'},
+                      // 移除 cacheWidth/cacheHeight：该参数在华为设备上触发 FlutterImageDecoder
+                      // 导致 WebP 格式解码失败（'unimplemented'），改由系统原生解码器处理
+                      errorBuilder: (context, err, stack) => Container(
                         color: Colors.grey[200],
                         child: const Icon(Icons.book, size: 40, color: Colors.grey),
                       ),

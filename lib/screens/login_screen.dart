@@ -10,9 +10,15 @@ class LoginScreen extends StatefulWidget {
   State<LoginScreen> createState() => _LoginScreenState();
 }
 
+// ESJ Zone 允许的登录后落地 host
+const _kAllowedHost = 'www.esjzone.cc';
+// 登录页和注册页路径，不视为登录成功
+const _kExcludedPaths = ['/my/login', '/my/reg'];
+
 class _LoginScreenState extends State<LoginScreen> {
   late final WebViewController _controller;
   bool _isLoading = true;
+  bool _loginHandled = false; // 防重入锁
 
   @override
   void initState() {
@@ -21,14 +27,13 @@ class _LoginScreenState extends State<LoginScreen> {
       ..setJavaScriptMode(JavaScriptMode.unrestricted)
       ..setNavigationDelegate(
         NavigationDelegate(
-          onPageStarted: (_) => setState(() => _isLoading = true),
+          onPageStarted: (_) {
+            if (mounted) setState(() => _isLoading = true);
+          },
           onPageFinished: (url) async {
-            setState(() => _isLoading = false);
+            if (mounted) setState(() => _isLoading = false);
             debugPrint('WebView navigated to: $url');
-            // 跳转到 profile/forum 页说明登录成功（HttpOnly Cookie 无法用 JS 读取）
-            if (url.contains('esjzone.cc') &&
-                !url.contains('/my/login') &&
-                !url.contains('/my/reg')) {
+            if (_isLoginSuccess(url)) {
               await _onLoginSuccess(url);
             }
           },
@@ -37,10 +42,25 @@ class _LoginScreenState extends State<LoginScreen> {
       ..loadRequest(Uri.parse('https://www.esjzone.cc/my/login'));
   }
 
+  /// 严格校验：必须是允许的 host，且不在排除路径列表中
+  bool _isLoginSuccess(String url) {
+    if (_loginHandled) return false;
+    try {
+      final uri = Uri.parse(url);
+      if (uri.host != _kAllowedHost) return false;
+      for (final path in _kExcludedPaths) {
+        if (uri.path.startsWith(path)) return false;
+      }
+      return true;
+    } catch (_) {
+      return false;
+    }
+  }
+
   Future<void> _onLoginSuccess(String url) async {
+    if (_loginHandled) return;
+    _loginHandled = true; // 加锁，防止重复触发
     debugPrint('=== [ESJ] 登录成功，当前 URL: $url');
-    // 登录凭证为 HttpOnly Cookie，由 WebView 自动管理，无需手动提取
-    // 保存一个登录标记，让 AuthService 知道已登录
     await AuthService.markLoggedIn();
     if (mounted) {
       Navigator.of(context).pushAndRemoveUntil(
@@ -56,6 +76,7 @@ class _LoginScreenState extends State<LoginScreen> {
       appBar: AppBar(
         title: const Text('登录 ESJ Zone'),
         backgroundColor: Theme.of(context).colorScheme.inversePrimary,
+        automaticallyImplyLeading: false, // 禁止返回键，防止用户绕过登录
       ),
       body: Stack(
         children: [

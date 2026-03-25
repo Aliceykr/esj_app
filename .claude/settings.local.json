@@ -7,7 +7,8 @@
       "Bash(xargs grep:*)",
       "WebFetch(domain:www.esjzone.cc)",
       "mcp__contextweaver__codebase-retrieval",
-      "Bash(flutter analyze:*)"
+      "Bash(flutter analyze:*)",
+      "Bash(python -c \"import json,sys; h=json.load\\(sys.stdin\\); entries=h[''''log''''][''''entries''''][:5]; [print\\(e[''''request''''][''''url''''], e[''''response''''][''''status'''']\\) for e in entries]\")"
     ]
   }
 }
