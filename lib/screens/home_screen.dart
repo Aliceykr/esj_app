@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:webview_flutter/webview_flutter.dart';
 import '../models/novel.dart';
@@ -21,15 +22,13 @@ class _HomeScreenState extends State<HomeScreen> {
   bool _loading = true;
   String? _error;
   String? _selectedCategory;
-
-  // O5: 过滤结果缓存，避免每次 build 重新计算
   List<Novel> _cachedFilteredNovels = [];
 
   late final WebViewController _webController;
 
-  // 加载序号：每次发起新请求递增，回调时比对序号，忽略过期请求
+  // 防竞态：每次新请求递增，回调时比对忽略过期
   int _loadToken = 0;
-  Completer<void>? _completer;
+  Timer? _timeoutTimer;
 
   @override
   void initState() {
@@ -38,129 +37,103 @@ class _HomeScreenState extends State<HomeScreen> {
     _load();
   }
 
-  // O7: dispose 时安全释放 Completer，防内存泄漏
   @override
   void dispose() {
-    if (_completer != null && !_completer!.isCompleted) {
-      _completer!.completeError(StateError('disposed'));
-    }
-    _completer = null;
+    _timeoutTimer?.cancel();
     super.dispose();
   }
 
   void _initWebController() {
     _webController = WebViewController()
       ..setJavaScriptMode(JavaScriptMode.unrestricted)
-      ..addJavaScriptChannel(
-        'FlutterBridge',
-        onMessageReceived: (msg) {
-          final completer = _completer;
-          if (completer == null || completer.isCompleted) return;
-          // 强制打印原始消息摘要，帮助定位选择器问题
+      ..setNavigationDelegate(NavigationDelegate(
+        onPageFinished: (url) async {
+          debugPrint('[HomeScreen] 页面加载完成: $url');
+          if (!url.contains('esjzone.cc')) {
+            debugPrint('[HomeScreen] 重定向至非 esjzone.cc，Session 可能已失效: $url');
+            await _handleSessionExpired();
+            return;
+          }
+          final token = _loadToken;
+          // 等待 DOM 稳定（服务端渲染不需要等 JS 框架，500ms 足够）
+          await Future.delayed(const Duration(milliseconds: 500));
+          if (!mounted || token != _loadToken) return;
           try {
-            final raw = msg.message;
-            final truncated = raw.length > 300 ? raw.substring(0, 300) : raw;
-            debugPrint('[HomeScreen] FlutterBridge raw(${raw.length}b): $truncated');
-          } catch (_) {}
-          try {
-            // O8: 传入 expectedToken，过期消息直接丢弃
-            final data = NovelService.parseHomeJson(
-              msg.message,
-              expectedToken: _loadToken,
+            final raw = await _webController.runJavaScriptReturningResult(
+              'document.documentElement.outerHTML',
             );
-            debugPrint('[HomeScreen] 解析到 ${data.latestNovels.length} 本小说，${data.categories.length} 个分类');
-            if (mounted) {
+            // Android WebView 返回带 JSON 转义的字符串，需要 jsonDecode 还原
+            final html = raw is String
+                ? (raw.startsWith('"') ? jsonDecode(raw) as String : raw)
+                : raw.toString();
+            // 检测空壳页（html.length < 100）或华为错误页
+            if (html.length < 100 || html.contains('ERR_CONNECTION_TIMED_OUT') || html.contains('网页无法打开')) {
+              throw Exception('网络连接失败，无法访问 esjzone.cc\n请检查网络或使用代理后重试');
+            }
+            final data = NovelService.parseHomeHtml(html);
+            _timeoutTimer?.cancel();
+            if (mounted && token == _loadToken) {
               setState(() {
                 _data = data;
                 _loading = false;
                 _error = null;
                 _selectedCategory = null;
-                // O5: 数据更新时同步更新过滤缓存
                 _cachedFilteredNovels = data.latestNovels;
               });
             }
-            completer.complete();
-          } on StaleTokenException {
-            // 过期消息，静默忽略
           } catch (e) {
-            completer.completeError(e);
-          }
-        },
-      )
-      ..setNavigationDelegate(NavigationDelegate(
-        onPageFinished: (url) async {
-          debugPrint('[HomeScreen] 页面加载完成: $url');
-          if (!url.contains('esjzone.cc')) {
-            debugPrint('[HomeScreen] 检测到重定向至非 esjzone.cc 域名，Session 可能已失效: $url');
-            final completer = _completer;
-            if (completer != null && !completer.isCompleted) {
-              completer.completeError(_SessionExpiredException());
+            debugPrint('[HomeScreen] 解析失败: $e');
+            _timeoutTimer?.cancel();
+            if (mounted && token == _loadToken) {
+              setState(() {
+                _error = '解析失败: $e';
+                _loading = false;
+              });
             }
-            return;
-          }
-          // 延迟 800ms 等待 JS 框架完成渲染后再注入脚本
-          await Future.delayed(const Duration(milliseconds: 800));
-          final completer = _completer;
-          if (completer != null && !completer.isCompleted) {
-            await _webController.runJavaScript(
-              NovelService.buildExtractScript(_loadToken),
-            );
           }
         },
         onWebResourceError: (err) {
           debugPrint('[HomeScreen] 资源错误(isForMainFrame=${err.isForMainFrame}): ${err.description}');
-          // 华为 WebView 会持续误报 isForMainFrame=true 的 SSL 错误，全部忽略
-          // 只依赖 JS 脚本回调和超时机制
+          // 华为 WebView 误报，不处理；依赖 onPageFinished 驱动
         },
       ));
   }
 
   Future<void> _load() async {
     if (!mounted) return;
-
+    _timeoutTimer?.cancel();
     final token = ++_loadToken;
-
-    if (_completer != null && !_completer!.isCompleted) {
-      _completer!.completeError(Exception('cancelled'));
-    }
 
     setState(() {
       _loading = true;
       _error = null;
     });
 
-    _completer = Completer<void>();
     _webController.loadRequest(Uri.parse('${NovelService.baseUrl}/'));
 
-    try {
-      await _completer!.future.timeout(
-        const Duration(seconds: 25),
-        onTimeout: () => throw Exception('首页加载超时，请检查网络'),
-      );
-    } catch (e) {
-      if (!mounted || token != _loadToken) return;
-      final msg = e.toString();
-      if (msg.contains('cancelled') || msg.contains('disposed')) return;
-      // Session 失效：清除登录态并跳回登录页
-      if (e is _SessionExpiredException) {
-        await AuthService.logout();
-        await WebViewCookieManager().clearCookies();
-        if (mounted) {
-          Navigator.of(context).pushAndRemoveUntil(
-            MaterialPageRoute(builder: (_) => const AuthGate()),
-            (_) => false,
-          );
-        }
-        return;
+    // 30s 超时兜底：onPageFinished 未触发时提示用户
+    _timeoutTimer = Timer(const Duration(seconds: 30), () {
+      if (mounted && token == _loadToken && _loading) {
+        setState(() {
+          _error = '首页加载超时，请检查网络后重试';
+          _loading = false;
+        });
       }
-      setState(() {
-        _error = msg;
-        _loading = false;
-      });
+    });
+  }
+
+  Future<void> _handleSessionExpired() async {
+    _timeoutTimer?.cancel();
+    await AuthService.logout();
+    await WebViewCookieManager().clearCookies();
+    if (mounted) {
+      Navigator.of(context).pushAndRemoveUntil(
+        MaterialPageRoute(builder: (_) => const AuthGate()),
+        (_) => false,
+      );
     }
   }
 
-  // O5: 分类变更时更新过滤缓存，而非在 build 中每次重算
   void _onCategorySelected(String cat) {
     setState(() {
       _selectedCategory = _selectedCategory == cat ? null : cat;
@@ -259,7 +232,6 @@ class _HomeScreenState extends State<HomeScreen> {
 
   List<Widget> _buildContentSlivers() {
     final data = _data!;
-    // O5: 直接使用缓存的过滤结果
     final novels = _cachedFilteredNovels;
 
     return [
@@ -305,7 +277,6 @@ class _HomeScreenState extends State<HomeScreen> {
                     onTap: () => _openNovel(novels[index]),
                   ),
                   childCount: novels.length,
-                  // O6: 为每个 NovelCard 添加重绘边界，提升滚动 FPS
                   addRepaintBoundaries: true,
                 ),
                 gridDelegate:
@@ -351,9 +322,4 @@ class _HomeScreenState extends State<HomeScreen> {
       ),
     );
   }
-}
-
-/// WebView 检测到被重定向出 esjzone.cc，说明 Session 已失效
-class _SessionExpiredException implements Exception {
-  const _SessionExpiredException();
 }

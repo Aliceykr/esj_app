@@ -22,18 +22,16 @@ class NovelCard extends StatelessWidget {
                       novel.coverUrl,
                       fit: BoxFit.cover,
                       width: double.infinity,
-                      // 防盗链：esjzone.cc 图片服务器校验 Referer
-                      headers: const {'Referer': 'https://www.esjzone.cc/'},
-                      // 移除 cacheWidth/cacheHeight：该参数在华为设备上触发 FlutterImageDecoder
-                      // 导致 WebP 格式解码失败（'unimplemented'），改由系统原生解码器处理
-                      errorBuilder: (context, err, stack) => Container(
-                        color: Colors.grey[200],
-                        child: const Icon(Icons.book, size: 40, color: Colors.grey),
+                      errorBuilder: (context, err, stack) => _placeholder(
+                        icon: Icons.broken_image_outlined,
+                        label: '无法加载',
+                        color: Colors.orange[100]!,
                       ),
                     )
-                  : Container(
-                      color: Colors.grey[200],
-                      child: const Icon(Icons.book, size: 40, color: Colors.grey),
+                  : _placeholder(
+                      icon: Icons.image_not_supported_outlined,
+                      label: '无封面',
+                      color: Colors.grey[200]!,
                     ),
             ),
           ),
@@ -51,6 +49,29 @@ class NovelCard extends StatelessWidget {
               overflow: TextOverflow.ellipsis,
               style: TextStyle(fontSize: 11, color: Colors.grey[600]),
             ),
+        ],
+      ),
+    );
+  }
+
+  Widget _placeholder({
+    required IconData icon,
+    required String label,
+    required Color color,
+  }) {
+    return Container(
+      width: double.infinity,
+      height: double.infinity,
+      color: color,
+      child: Column(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          Icon(icon, size: 32, color: Colors.grey[500]),
+          const SizedBox(height: 4),
+          Text(
+            label,
+            style: TextStyle(fontSize: 10, color: Colors.grey[600]),
+          ),
         ],
       ),
     );

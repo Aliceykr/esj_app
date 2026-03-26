@@ -8,7 +8,19 @@
       "WebFetch(domain:www.esjzone.cc)",
       "mcp__contextweaver__codebase-retrieval",
       "Bash(flutter analyze:*)",
-      "Bash(python -c \"import json,sys; h=json.load\\(sys.stdin\\); entries=h[''''log''''][''''entries''''][:5]; [print\\(e[''''request''''][''''url''''], e[''''response''''][''''status'''']\\) for e in entries]\")"
+      "Bash(python -c \"import json,sys; h=json.load\\(sys.stdin\\); entries=h[''''log''''][''''entries''''][:5]; [print\\(e[''''request''''][''''url''''], e[''''response''''][''''status'''']\\) for e in entries]\")",
+      "Bash(grep -r \"api\\\\|API\\\\|json\\\\|fetch\\\\|xhr\\\\|axios\" lib/ --include=*.dart -l)",
+      "Bash(grep -r esjzone lib/ --include=*.dart)",
+      "Bash(curl -s -A 'Mozilla/5.0 \\(Linux; Android 10; SM-G975U\\) AppleWebKit/537.36 \\(KHTML, like Gecko\\) Chrome/120.0.0.0 Mobile Safari/537.36' 'https://www.esjzone.cc/' --max-time 15 -I)",
+      "Bash(curl -s -A 'Mozilla/5.0 \\(Linux; Android 10; SM-G975U\\) AppleWebKit/537.36 \\(KHTML, like Gecko\\) Chrome/120.0.0.0 Mobile Safari/537.36' 'https://www.esjzone.cc/' --max-time 15 -L)",
+      "Bash(powershell -ExecutionPolicy Bypass -File D:/tmp_fetch.ps1 2>&1)",
+      "Bash(powershell -ExecutionPolicy Bypass -File 'D:\\\\tmp_fetch.ps1' 2>&1)",
+      "Read(//mnt/d/**)",
+      "Read(//c/Windows/System32/WindowsPowerShell/v1.0/**)",
+      "Bash(/c/Windows/System32/WindowsPowerShell/v1.0/powershell.exe -ExecutionPolicy Bypass -File 'C:\\\\Users\\\\KE\\\\tmp_fetch.ps1' 2>&1)",
+      "Bash(/c/Windows/System32/WindowsPowerShell/v1.0/powershell.exe -ExecutionPolicy Bypass -Command \"Get-Content 'C:\\\\Users\\\\KE\\\\tmp_fetch.ps1' | Invoke-Expression\" 2>&1)",
+      "mcp__context7__resolve-library-id",
+      "Bash(flutter build:*)"
     ]
   }
 }
